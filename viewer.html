@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OwnTracker - Device Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            font-family: Arial, sans-serif;
+        }
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        #header {
+            background-color: #2c3e50;
+            color: white;
+            padding: 10px;
+            text-align: center;
+        }
+        #map {
+            flex-grow: 1;
+            width: 100%;
+        }
+        #device-list {
+            position: fixed;
+            top: 70px;
+            right: 10px;
+            padding: 10px;
+            background-color: white;
+            border-radius: 4px;
+            z-index: 1000;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .device-item {
+            margin-bottom: 5px;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .device-item:hover {
+            background-color: #f0f0f0;
+        }
+        .device-item.active {
+            background-color: #e0e0e0;
+            font-weight: bold;
+        }
+        .info-box {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            padding: 8px 12px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 4px;
+            z-index: 1000;
+        }
+        .custom-div-icon {
+            background: none !important;
+            border: none !important;
+        }
+        .distance-box {
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .download-btn {
+            margin-top: 10px;
+            padding: 5px 10px;
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        .download-btn:hover {
+            background-color: #27ae60;
+        }
+        .legend {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            padding: 8px 12px;
+            background-color: rgba(255, 255, 255, 0.8);
+            border-radius: 4px;
+            z-index: 1000;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 3px;
+        }
+        .legend-icon {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>OwnTracker - Device Viewer</h1>
+        </div>
+        <div id="map"></div>
+        <div id="device-list">
+            <h3>Tracked Devices</h3>
+            <div id="devices-container">Loading devices...</div>
+            <button id="download-btn" class="download-btn">Download History</button>
+        </div>
+        <div class="info-box">
+            <a href="/">Back to My Location</a> | 
+            Selected Device: <span id="current-device">None</span>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script>
+        // Initialize variables
+        let map, markers = {};
+        let selectedDeviceId = null;
+        
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([0, 0], 2);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Load available devices
+            loadDevices();
+            
+            // Set up auto-refresh
+            setInterval(refreshDeviceLocations, 30000); // refresh every 30 seconds
+            
+            // Set up download button
+            document.getElementById('download-btn').addEventListener('click', downloadLocationHistory);
+            
+            // Add legend
+            addLegend();
+        }
+        
+        // Add map legend
+        function addLegend() {
+            const legend = document.createElement('div');
+            legend.className = 'legend';
+            legend.innerHTML = `
+                <div><strong>Legend:</strong></div>
+                <div class="legend-item">
+                    <span class="legend-icon" style="background-color: #2ecc71;"></span>
+                    Start point
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon" style="background-color: #e74c3c;"></span>
+                    End point
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon" style="background-color: #2980b9;"></span>
+                    Track point
+                </div>
+                <div class="legend-item">
+                    <span style="height: 3px; width: 20px; background-color: #3498db; display: inline-block;"></span>
+                    Path
+                </div>
+            `;
+            document.body.appendChild(legend);
+        }
+        
+        // Download location history as CSV
+        function downloadLocationHistory() {
+            if (!selectedDeviceId) {
+                alert('Please select a device first');
+                return;
+            }
+            
+            const host = window.location.origin;
+            
+            fetch(`${host}/api/location/${selectedDeviceId}`)
+                .then(response => response.json())
+                .then(locations => {
+                    if (!locations || locations.length === 0) {
+                        alert('No location data available');
+                        return;
+                    }
+                    
+                    // Create CSV content
+                    let csvContent = "data:text/csv;charset=utf-8,";
+                    csvContent += "Timestamp,Latitude,Longitude,Accuracy\n";
+                    
+                    locations.forEach(loc => {
+                        csvContent += `${loc.timestamp},${loc.latitude},${loc.longitude},${loc.accuracy || 'N/A'}\n`;
+                    });
+                    
+                    // Create download link
+                    const encodedUri = encodeURI(csvContent);
+                    const link = document.createElement("a");
+                    link.setAttribute("href", encodedUri);
+                    link.setAttribute("download", `${selectedDeviceId}_location_history.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                })
+                .catch(error => {
+                    console.error('Error downloading location data:', error);
+                    alert('Error downloading location data');
+                });
+        }
+        
+        // Load list of available devices
+        function loadDevices() {
+            const host = window.location.origin;
+            
+            fetch(`${host}/api/devices`)
+                .then(response => response.json())
+                .then(devices => {
+                    displayDeviceList(devices);
+                })
+                .catch(error => {
+                    console.error('Error loading devices:', error);
+                    document.getElementById('devices-container').textContent = 'Error loading devices. Try refreshing.';
+                });
+        }
+        
+        // Display the list of devices
+        function displayDeviceList(devices) {
+            const container = document.getElementById('devices-container');
+            
+            if (!devices || devices.length === 0) {
+                container.textContent = 'No devices found. Share location from a device first.';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            devices.forEach(device => {
+                const deviceElement = document.createElement('div');
+                deviceElement.className = 'device-item';
+                deviceElement.textContent = `Device ${device.id.substring(7)} - ${device.lastSeen}`;
+                deviceElement.dataset.id = device.id;
+                
+                deviceElement.addEventListener('click', () => {
+                    selectDevice(device.id);
+                });
+                
+                container.appendChild(deviceElement);
+            });
+            
+            // Select the first device by default
+            if (devices.length > 0 && !selectedDeviceId) {
+                selectDevice(devices[0].id);
+            }
+        }
+        
+        // Select a device and load its location
+        function selectDevice(deviceId) {
+            selectedDeviceId = deviceId;
+            
+            // Update UI
+            document.querySelectorAll('.device-item').forEach(el => {
+                el.classList.remove('active');
+                if (el.dataset.id === deviceId) {
+                    el.classList.add('active');
+                }
+            });
+            
+            document.getElementById('current-device').textContent = deviceId.substring(7);
+            
+            // Load location for this device
+            loadDeviceLocation(deviceId);
+        }
+        
+        // Load location data for a specific device
+        function loadDeviceLocation(deviceId) {
+            const host = window.location.origin;
+            
+            fetch(`${host}/api/location/${deviceId}`)
+                .then(response => response.json())
+                .then(locations => {
+                    displayDeviceLocation(deviceId, locations);
+                })
+                .catch(error => {
+                    console.error(`Error loading location for device ${deviceId}:`, error);
+                });
+        }
+        
+        // Display a device's location on the map
+        function displayDeviceLocation(deviceId, locations) {
+            // Remove existing marker if any
+            if (markers[deviceId]) {
+                map.removeLayer(markers[deviceId].marker);
+                if (markers[deviceId].circle) {
+                    map.removeLayer(markers[deviceId].circle);
+                }
+                if (markers[deviceId].path) {
+                    map.removeLayer(markers[deviceId].path);
+                }
+                if (markers[deviceId].startMarker) {
+                    map.removeLayer(markers[deviceId].startMarker);
+                }
+                if (markers[deviceId].endMarker) {
+                    map.removeLayer(markers[deviceId].endMarker);
+                }
+                // Remove any track point markers
+                if (markers[deviceId].trackPoints) {
+                    markers[deviceId].trackPoints.forEach(point => map.removeLayer(point));
+                }
+            }
+            
+            if (!locations || locations.length === 0) {
+                console.log(`No location data for device ${deviceId}`);
+                return;
+            }
+            
+            // Get the first and last location
+            const firstLocation = locations[0];
+            const lastLocation = locations[locations.length - 1];
+            
+            // Create start marker (green)
+            const startMarker = L.marker([firstLocation.latitude, firstLocation.longitude], {
+                icon: L.divIcon({
+                    html: `<div style="background-color: #2ecc71; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+                    className: 'custom-div-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                })
+            }).addTo(map);
+            startMarker.bindPopup(`Start: ${new Date(firstLocation.timestamp).toLocaleString()}`);
+            
+            // Create end marker (red) - this is also the current position
+            const marker = L.marker([lastLocation.latitude, lastLocation.longitude], {
+                icon: L.divIcon({
+                    html: `<div style="background-color: #e74c3c; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
+                    className: 'custom-div-icon',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                })
+            }).addTo(map);
+            marker.bindPopup(`Device: ${deviceId.substring(7)}<br>Last update: ${new Date(lastLocation.timestamp).toLocaleString()}`);
+            
+            // Create accuracy circle if available
+            let circle = null;
+            if (lastLocation.accuracy) {
+                circle = L.circle([lastLocation.latitude, lastLocation.longitude], {
+                    radius: lastLocation.accuracy,
+                    color: '#3388ff',
+                    fillColor: '#3388ff',
+                    fillOpacity: 0.2
+                }).addTo(map);
+            }
+            
+            // Create path with markers for each point
+            let path = null;
+            let trackPoints = [];
+            
+            if (locations.length > 1) {
+                // Create the path line
+                const points = locations.map(loc => [loc.latitude, loc.longitude]);
+                path = L.polyline(points, { 
+                    color: '#3498db', 
+                    weight: 3,
+                    opacity: 0.8,
+                    lineJoin: 'round'
+                }).addTo(map);
+                
+                // Add the path with timestamp markers
+                // Only add markers for a subset of points to avoid overcrowding
+                const step = Math.max(1, Math.floor(locations.length / 10));
+                for (let i = 1; i < locations.length - 1; i += step) {
+                    const loc = locations[i];
+                    const timeMarker = L.circleMarker([loc.latitude, loc.longitude], {
+                        radius: 3,
+                        color: '#2980b9',
+                        fillColor: '#2980b9',
+                        fillOpacity: 1
+                    }).addTo(map);
+                    timeMarker.bindPopup(`Time: ${new Date(loc.timestamp).toLocaleString()}`);
+                    trackPoints.push(timeMarker);
+                }
+            }
+            
+            // Store references
+            markers[deviceId] = { 
+                marker, 
+                circle, 
+                path, 
+                startMarker,
+                endMarker: marker,
+                trackPoints
+            };
+            
+            // Create bounds to include all points
+            const bounds = L.latLngBounds(locations.map(loc => [loc.latitude, loc.longitude]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+            
+            // Add distance information
+            if (locations.length > 1) {
+                let totalDistance = 0;
+                for (let i = 1; i < locations.length; i++) {
+                    const prevLoc = locations[i-1];
+                    const currLoc = locations[i];
+                    totalDistance += map.distance(
+                        [prevLoc.latitude, prevLoc.longitude], 
+                        [currLoc.latitude, currLoc.longitude]
+                    );
+                }
+                
+                // Add distance info box
+                const existingBox = document.getElementById('distance-box');
+                if (existingBox) {
+                    document.body.removeChild(existingBox);
+                }
+                
+                const distanceBox = document.createElement('div');
+                distanceBox.id = 'distance-box';
+                distanceBox.className = 'distance-box';
+                distanceBox.style.position = 'fixed';
+                distanceBox.style.bottom = '110px';
+                distanceBox.style.right = '10px';
+                distanceBox.style.padding = '8px 12px';
+                distanceBox.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+                distanceBox.style.borderRadius = '4px';
+                distanceBox.style.zIndex = '1000';
+                distanceBox.style.boxShadow = '0 0 10px rgba(0,0,0,0.1)';
+                
+                // Calculate duration
+                const startTime = new Date(firstLocation.timestamp);
+                const endTime = new Date(lastLocation.timestamp);
+                const durationMs = endTime - startTime;
+                const hours = Math.floor(durationMs / (1000 * 60 * 60));
+                const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+                
+                distanceBox.innerHTML = `
+                    <strong>Track Info:</strong><br>
+                    Start: ${startTime.toLocaleString()}<br>
+                    End: ${endTime.toLocaleString()}<br>
+                    Duration: ${hours}h ${minutes}m<br>
+                    Distance: ${(totalDistance / 1000).toFixed(2)} km<br>
+                    Points: ${locations.length}
+                `;
+                document.body.appendChild(distanceBox);
+            }
+        }
+        
+        // Refresh locations of all devices
+        function refreshDeviceLocations() {
+            if (selectedDeviceId) {
+                loadDeviceLocation(selectedDeviceId);
+            }
+        }
+        
+        // Initialize the map when the page loads
+        window.onload = initMap;
+    </script>
+</body>
+</html>
