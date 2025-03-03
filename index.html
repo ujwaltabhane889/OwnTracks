@@ -78,6 +78,31 @@
             margin-top: 10px;
             font-size: 12px;
         }
+        /* Alert Styles */
+        .alert {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 20px;
+            color: white;
+            border-radius: 5px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            z-index: 2000;
+            text-align: center;
+            font-weight: bold;
+            transition: opacity 0.5s ease-in-out;
+            opacity: 0;
+        }
+        .alert.show {
+            opacity: 1;
+        }
+        .alert-success {
+            background-color: #27ae60;
+        }
+        .alert-warning {
+            background-color: #e74c3c;
+        }
     </style>
 </head>
 <body>
@@ -102,6 +127,9 @@
         </div>
     </div>
 
+    <!-- Alert Element -->
+    <div id="alert" class="alert"></div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
     <script>
         // Initialize variables
@@ -116,6 +144,23 @@
             const timestamp = new Date().getTime();
             const random = Math.floor(Math.random() * 10000);
             return `device-${timestamp}-${random}`;
+        }
+
+        // Show alert function
+        function showAlert(message, type) {
+            const alertElement = document.getElementById('alert');
+            alertElement.textContent = message;
+            alertElement.className = 'alert ' + (type === 'success' ? 'alert-success' : 'alert-warning');
+            
+            // Show the alert
+            setTimeout(() => {
+                alertElement.classList.add('show');
+            }, 100);
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                alertElement.classList.remove('show');
+            }, 3000);
         }
 
         // Initialize map
@@ -180,8 +225,12 @@
                     trackBtn.textContent = 'Stop Tracking';
                     updateBtn.disabled = false;
                     statusElement.textContent = 'Tracking your location...';
+                    
+                    // Show alert for tracking start
+                    showAlert('Location tracking started!', 'success');
                 } else {
                     statusElement.textContent = 'Geolocation is not supported by this browser.';
+                    showAlert('Geolocation not supported by your device', 'warning');
                 }
             } else {
                 // Stop tracking
@@ -190,6 +239,9 @@
                 trackBtn.textContent = 'Start Tracking';
                 updateBtn.disabled = true;
                 statusElement.textContent = 'Location tracking stopped';
+                
+                // Show alert for tracking stop
+                showAlert('Location tracking stopped!', 'warning');
             }
         }
 
@@ -224,21 +276,25 @@
         // Handle position errors
         function handlePositionError(error) {
             const statusElement = document.getElementById('status');
+            let errorMessage = '';
             
             switch (error.code) {
                 case error.PERMISSION_DENIED:
-                    statusElement.textContent = 'Location access denied. Please enable location permissions.';
+                    errorMessage = 'Location access denied. Please enable location permissions.';
                     break;
                 case error.POSITION_UNAVAILABLE:
-                    statusElement.textContent = 'Location information is unavailable.';
+                    errorMessage = 'Location information is unavailable.';
                     break;
                 case error.TIMEOUT:
-                    statusElement.textContent = 'Location request timed out.';
+                    errorMessage = 'Location request timed out.';
                     break;
                 default:
-                    statusElement.textContent = 'An unknown error occurred getting location.';
+                    errorMessage = 'An unknown error occurred getting location.';
                     break;
             }
+            
+            statusElement.textContent = errorMessage;
+            showAlert(errorMessage, 'warning');
             
             // Stop tracking on error
             if (watchId !== null) {
@@ -259,8 +315,12 @@
                     handlePositionError,
                     { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
                 );
+                
+                // Show update alert
+                showAlert('Updating your location...', 'success');
             } else {
                 statusElement.textContent = 'Geolocation is not supported by this browser.';
+                showAlert('Geolocation not supported by your device', 'warning');
             }
         }
 
@@ -324,6 +384,7 @@
             .catch(error => {
                 console.error('Error sending location to server:', error);
                 document.getElementById('status').textContent = 'Error updating server. Will retry...';
+                showAlert('Failed to send location to server', 'warning');
             });
         }
 
